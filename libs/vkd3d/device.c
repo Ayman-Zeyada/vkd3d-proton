@@ -1310,13 +1310,14 @@ static void vkd3d_instance_apply_global_shader_quirks(void)
     struct override
     {
         union vkd3d_config_flags config;
-        uint32_t quirk;
+        vkd3d_shader_quirks_t quirk;
         bool negative;
     };
 
     static const struct override overrides[] =
     {
         { VKD3D_CONFIG_FLAG_STATIC(FORCE_NO_INVARIANT_POSITION), VKD3D_SHADER_QUIRK_INVARIANT_POSITION, true },
+        { VKD3D_CONFIG_FLAG_STATIC(DISABLE_CLIP_CULL_DISTANCE), VKD3D_SHADER_QUIRK_DISABLE_CLIP_CULL_DISTANCE, false },
     };
     bool eq_test;
     unsigned int i;
@@ -3930,6 +3931,13 @@ static void d3d12_device_init_workarounds(struct d3d12_device *device)
 
     /* Have a local copy of this since we may need to apply per-device workarounds in shader compiler. */
     device->workarounds.quirks = vkd3d_shader_quirk_info_template;
+
+    if (!device->device_info.features2.features.shaderClipDistance ||
+            !device->device_info.features2.features.shaderCullDistance)
+    {
+        WARN("Shader clip/cull distance is not fully supported. Disabling SV_ClipDistance/SV_CullDistance I/O.\n");
+        device->workarounds.quirks.global_quirks |= VKD3D_SHADER_QUIRK_DISABLE_CLIP_CULL_DISTANCE;
+    }
 
     /* If we're faking VRS tier 1, we need to just nop out everything about primitive shading rate. */
     if ((vkd3d_application_feature_override & VKD3D_APPLICATION_FEATURE_RDNA1_COMPATIBILITY) &&

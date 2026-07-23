@@ -81,6 +81,9 @@ Inside the vkd3d-proton directory, run:
 
 This will create a folder `vkd3d-master` in `/your/target/directory`, which contains both 32-bit and 64-bit versions of vkd3d-proton, which can be set up in the same way as the release versions as noted above.
 
+This branch carries an additional dxil-spirv patch. Run
+`sh ./apply-subproject-patches.sh` after updating submodules and before configuring a local build.
+
 If you want to build natively (ie. for `libvkd3d-proton.so`), pass `--native` to the build script. This option will make it build using your system's compilers.
 
 In order to preserve the build directories for development, pass `--dev-build` to the script. This option implies `--no-package`. After making changes to the source code, you can then do the following to rebuild vkd3d-proton:
@@ -176,6 +179,11 @@ commas or semicolons.
       so it should not be a real issue even on lower VRAM cards.
     - `force_host_cached` - Forces all host visible allocations to be CACHED, which greatly accelerates captures.
     - `no_invariant_position` - Avoids workarounds for invariant position. The workaround is enabled by default.
+    - `disable_clip_cull_distance` - Drops `SV_ClipDistance` and `SV_CullDistance` shader I/O. This is a lossy
+      workaround for Vulkan drivers which cannot compile the corresponding SPIR-V built-ins.
+    - `force_solid_fill` - Replaces wireframe rasterization with solid fill. This is a lossy workaround for
+      Vulkan drivers without `fillModeNonSolid`.
+    - `log_graphics_pipeline_state` - Logs the full graphics state immediately before Vulkan pipeline creation.
  - `VKD3D_DEBUG` - controls the debug level for log messages produced by
    vkd3d-proton. Accepts the following values: none, err, info, fixme, warn, trace.
  - `VKD3D_SHADER_DEBUG` - controls the debug level for log messages produced by

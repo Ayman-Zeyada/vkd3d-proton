@@ -1,0 +1,165 @@
+diff --git a/dxil_converter.cpp b/dxil_converter.cpp
+index 8862e510..293bdc2c 100644
+--- a/dxil_converter.cpp
++++ b/dxil_converter.cpp
+@@ -4900,6 +4900,12 @@ bool Converter::Impl::emit_stage_output_variables()
+ 		}
+ 		else if (system_value == DXIL::Semantic::ClipDistance)
+ 		{
++			if (options.quirks.disable_clip_cull_distance)
++			{
++				output_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
++				continue;
++			}
++
+ 			// DX is rather weird here and you can declare clip distance either as a vector or array, or both!
+ 			output_clip_cull_meta[element_id] = { clip_distance_count, cols, spv::BuiltInClipDistance };
+ 			output_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
+@@ -4908,6 +4914,12 @@ bool Converter::Impl::emit_stage_output_variables()
+ 		}
+ 		else if (system_value == DXIL::Semantic::CullDistance)
+ 		{
++			if (options.quirks.disable_clip_cull_distance)
++			{
++				output_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
++				continue;
++			}
++
+ 			// DX is rather weird here and you can declare clip distance either as a vector or array, or both!
+ 			output_clip_cull_meta[element_id] = { cull_distance_count, cols, spv::BuiltInCullDistance };
+ 			output_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
+@@ -5698,6 +5710,12 @@ bool Converter::Impl::emit_stage_input_variables()
+ 		}
+ 		else if (system_value == DXIL::Semantic::ClipDistance)
+ 		{
++			if (options.quirks.disable_clip_cull_distance)
++			{
++				input_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
++				continue;
++			}
++
+ 			// DX is rather weird here and you can declare clip distance either as a vector or array, or both!
+ 			input_clip_cull_meta[element_id] = { clip_distance_count, cols, spv::BuiltInClipDistance };
+ 			input_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
+@@ -5706,6 +5724,12 @@ bool Converter::Impl::emit_stage_input_variables()
+ 		}
+ 		else if (system_value == DXIL::Semantic::CullDistance)
+ 		{
++			if (options.quirks.disable_clip_cull_distance)
++			{
++				input_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
++				continue;
++			}
++
+ 			// DX is rather weird here and you can declare clip distance either as a vector or array, or both!
+ 			input_clip_cull_meta[element_id] = { cull_distance_count, cols, spv::BuiltInCullDistance };
+ 			input_elements_meta[element_id] = { 0, actual_element_type, 0, system_value };
+@@ -9710,6 +9734,10 @@ void Converter::Impl::set_option(const OptionBase &cap)
+ 			options.quirks.non_semantic_signal_concurrent_workgroup = true;
+ 			break;
+ 
++		case ShaderQuirk::DisableClipCullDistance:
++			options.quirks.disable_clip_cull_distance = true;
++			break;
++
+ 		default:
+ 			break;
+ 		}
+diff --git a/dxil_converter.hpp b/dxil_converter.hpp
+index 0680558a..1d83ab2a 100644
+--- a/dxil_converter.hpp
++++ b/dxil_converter.hpp
+@@ -788,7 +788,8 @@ enum class ShaderQuirk : uint32_t
+ 	PreciseFMA,
+ 	ClampWaveSizeToThreadGroup32,
+     NonSemanticSignalConcurrentWorkgroup,
+-	ForceNonUniform
++	ForceNonUniform,
++	DisableClipCullDistance
+ };
+ 
+ struct OptionShaderQuirk : OptionBase
+diff --git a/dxil_spirv_c.h b/dxil_spirv_c.h
+index b7d12046..049f0542 100644
+--- a/dxil_spirv_c.h
++++ b/dxil_spirv_c.h
+@@ -248,6 +248,8 @@ typedef enum dxil_spv_shader_quirk
+ 	DXIL_SPV_SHADER_QUIRK_NON_SEMANTIC_SIGNAL_CONCURRENT_WORKGROUP = 15,
+ 	/* Heavy hammer, aggressive_nonuniform tries to be a bit smarter. */
+ 	DXIL_SPV_SHADER_QUIRK_FORCE_NONUNIFORM = 16,
++	/* Lossy fallback for implementations without shaderClipDistance/shaderCullDistance. */
++	DXIL_SPV_SHADER_QUIRK_DISABLE_CLIP_CULL_DISTANCE = 17,
+ 	DXIL_SPV_SHADER_QUIRK_INT_MAX = 0x7fffffff
+ } dxil_spv_shader_quirk;
+ 
+diff --git a/opcodes/converter_impl.hpp b/opcodes/converter_impl.hpp
+index 9f188e83..309531d2 100644
+--- a/opcodes/converter_impl.hpp
++++ b/opcodes/converter_impl.hpp
+@@ -816,6 +816,7 @@ struct Converter::Impl
+ 			bool clamp_wave_size_to_thread_group32 = false;
+ 			bool non_semantic_signal_concurrent_workgroup = false;
+ 			bool force_nonuniform = false;
++			bool disable_clip_cull_distance = false;
+ 		} quirks;
+ 
+ 		struct
+diff --git a/opcodes/dxil/dxil_mesh.cpp b/opcodes/dxil/dxil_mesh.cpp
+index 6e57e0a9..e6aa531f 100644
+--- a/opcodes/dxil/dxil_mesh.cpp
++++ b/opcodes/dxil/dxil_mesh.cpp
+@@ -210,6 +210,15 @@ bool emit_store_vertex_output_instruction(Converter::Impl &impl, const llvm::Cal
+ 	if (!get_constant_operand(instruction, 1, &output_element_index))
+ 		return false;
+ 
++	if (impl.options.quirks.disable_clip_cull_distance)
++	{
++		auto meta_itr = impl.output_elements_meta.find(output_element_index);
++		if (meta_itr != impl.output_elements_meta.end() &&
++		    (meta_itr->second.semantic == DXIL::Semantic::ClipDistance ||
++		     meta_itr->second.semantic == DXIL::Semantic::CullDistance))
++			return true;
++	}
++
+ 	// Need special handling for clip distance.
+ 	auto *clip_cull_meta = output_clip_cull_distance_meta(impl, output_element_index);
+ 	if (clip_cull_meta)
+diff --git a/opcodes/dxil/dxil_resources.cpp b/opcodes/dxil/dxil_resources.cpp
+index 6f23119e..f5cc791e 100644
+--- a/opcodes/dxil/dxil_resources.cpp
++++ b/opcodes/dxil/dxil_resources.cpp
+@@ -170,6 +170,18 @@ bool emit_load_input_instruction(Converter::Impl &impl, const llvm::CallInst *in
+ 	if (!get_constant_operand(instruction, 1, &input_element_index))
+ 		return false;
+ 
++	if (impl.options.quirks.disable_clip_cull_distance)
++	{
++		auto meta_itr = impl.input_elements_meta.find(input_element_index);
++		if (meta_itr != impl.input_elements_meta.end() &&
++		    (meta_itr->second.semantic == DXIL::Semantic::ClipDistance ||
++		     meta_itr->second.semantic == DXIL::Semantic::CullDistance))
++		{
++			impl.rewrite_value(instruction, builder.makeNullConstant(impl.get_type_id(instruction->getType())));
++			return true;
++		}
++	}
++
+ 	// Need special handling for clip distance.
+ 	auto *clip_cull_meta = input_clip_cull_distance_meta(impl, input_element_index);
+ 	if (clip_cull_meta)
+@@ -424,6 +436,15 @@ bool emit_store_output_instruction(Converter::Impl &impl, const llvm::CallInst *
+ 	if (!get_constant_operand(instruction, 1, &output_element_index))
+ 		return false;
+ 
++	if (impl.options.quirks.disable_clip_cull_distance)
++	{
++		auto meta_itr = impl.output_elements_meta.find(output_element_index);
++		if (meta_itr != impl.output_elements_meta.end() &&
++		    (meta_itr->second.semantic == DXIL::Semantic::ClipDistance ||
++		     meta_itr->second.semantic == DXIL::Semantic::CullDistance))
++			return true;
++	}
++
+ 	// Need special handling for clip distance.
+ 	auto *clip_cull_meta = output_clip_cull_distance_meta(impl, output_element_index);
+ 	if (clip_cull_meta)

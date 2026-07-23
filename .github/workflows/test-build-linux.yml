@@ -13,6 +13,9 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Apply subproject patches
+      run: sh ./apply-subproject-patches.sh
+
     - name: Setup problem matcher
       uses: misyltoad/gcc-problem-matcher@v3
 

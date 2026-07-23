@@ -13,6 +13,10 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Apply subproject patches
+      shell: bash
+      run: sh ./apply-subproject-patches.sh
+
     - name: Setup widl and glslangValidator
       shell: pwsh
       run: |

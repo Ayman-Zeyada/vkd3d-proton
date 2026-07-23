@@ -6033,6 +6033,15 @@ static HRESULT d3d12_pipeline_state_init_graphics_create_info(struct d3d12_pipel
     }
 
     rs_desc_from_d3d12(&graphics->rs_desc, &desc->rasterizer_state);
+    if (graphics->rs_desc.polygonMode != VK_POLYGON_MODE_FILL &&
+            (!device->device_info.features2.features.fillModeNonSolid ||
+            VKD3D_CONFIG_FLAG_IS_SET(FORCE_SOLID_FILL)))
+    {
+        WARN("Non-solid polygon mode %u is unavailable or disabled; forcing solid fill.\n",
+                graphics->rs_desc.polygonMode);
+        graphics->rs_desc.polygonMode = VK_POLYGON_MODE_FILL;
+    }
+
     have_attachment = graphics->rt_count || graphics->dsv_format ||
             d3d12_graphics_pipeline_state_has_unknown_dsv_format_with_test(graphics);
     if ((!have_attachment && !(graphics->stage_flags & VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -6782,6 +6791,9 @@ static VkResult d3d12_pipeline_state_link_pipeline_variant(struct d3d12_pipeline
     if (flags2.flags)
         vk_prepend_struct(&create_info, &flags2);
 
+    if (VKD3D_CONFIG_FLAG_IS_SET(LOG_GRAPHICS_PIPELINE_STATE))
+        d3d12_pipeline_state_log_graphics_state(state);
+
     vr = VK_CALL(vkCreateGraphicsPipelines(state->device->vk_device,
             vk_cache, 1, &create_info, NULL, vk_pipeline));
 
@@ -6996,6 +7008,9 @@ VkPipeline d3d12_pipeline_state_create_pipeline_variant(struct d3d12_pipeline_st
 
     if (flags2.flags)
         vk_prepend_struct(&pipeline_desc, &flags2);
+
+    if (VKD3D_CONFIG_FLAG_IS_SET(LOG_GRAPHICS_PIPELINE_STATE))
+        d3d12_pipeline_state_log_graphics_state(state);
 
     vr = VK_CALL(vkCreateGraphicsPipelines(device->vk_device, vk_cache, 1, &pipeline_desc, NULL, &vk_pipeline));
 
