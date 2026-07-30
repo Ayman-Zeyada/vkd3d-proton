@@ -7285,6 +7285,19 @@ static uint32_t vkd3d_bindless_build_mutable_type_list(VkDescriptorType *list, u
     return count;
 }
 
+static bool vkd3d_descriptor_buffer_uses_variable_descriptor_count(struct d3d12_device *device)
+{
+    const VkPhysicalDeviceProperties *properties = &device->device_info.properties2.properties;
+
+    /* ARM's proprietary g29p1 driver makes shader descriptor reads resolve to zero whenever
+     * VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is combined with
+     * VK_EXT_descriptor_buffer. Fixed-count descriptor-buffer layouts use
+     * the same maximum descriptor count and avoid the broken driver path. */
+    return VKD3D_CONFIG_FLAG_IS_SET(SKIP_DRIVER_WORKAROUNDS) ||
+            properties->vendorID != VKD3D_VENDOR_ID_ARM ||
+            properties->driverVersion > VK_MAKE_VERSION(29, 1, 0);
+}
+
 /* Make sure copy sizes are deducible to constants by compiler, especially the single descriptor case.
  * We can get a linear stream of SIMD copies this way.
  * Potentially we can also use alignment hints to get aligned moves here,
@@ -7489,7 +7502,9 @@ static HRESULT vkd3d_bindless_state_add_binding(struct vkd3d_bindless_state *bin
     if (d3d12_device_uses_descriptor_buffers(device))
     {
         /* All update-after-bind features are implied when using descriptor buffers. */
-        vk_binding_flags[set_info->binding_index] = VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+        vk_binding_flags[set_info->binding_index] =
+                vkd3d_descriptor_buffer_uses_variable_descriptor_count(device)
+                ? VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT : 0;
         vk_set_layout_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
     else
@@ -7744,7 +7759,9 @@ static bool vkd3d_bindless_supports_mutable_type(struct d3d12_device *device, ui
     VkDescriptorBindingFlags binding_flag;
     VkDescriptorSetLayoutBinding binding;
 
-    binding_flag = VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+    binding_flag = d3d12_device_uses_descriptor_buffers(device) &&
+            !vkd3d_descriptor_buffer_uses_variable_descriptor_count(device)
+            ? 0 : VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
     if (!d3d12_device_uses_descriptor_buffers(device))
     {
         binding_flag |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
@@ -8186,6 +8203,10 @@ static HRESULT vkd3d_bindless_state_init_legacy(struct vkd3d_bindless_state *bin
     HRESULT hr = E_FAIL;
 
     bindless_state->flags = vkd3d_bindless_state_get_bindless_flags(device);
+
+    if (d3d12_device_uses_descriptor_buffers(device) &&
+            !vkd3d_descriptor_buffer_uses_variable_descriptor_count(device))
+        INFO("Using fixed-count descriptor-buffer layouts on ARM due to broken variable descriptor counts.\n");
 
     if (!d3d12_device_uses_descriptor_buffers(device))
     {
